@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
 
+Timeframe = Literal["1m", "5m"]
+
 TIMEFRAME_SECONDS: dict[str, int] = {
     "1m": 60,
     "5m": 300,
