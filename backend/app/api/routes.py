@@ -1,15 +1,23 @@
+import time
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import text
 from sqlalchemy.orm import Session
+import redis as redis_lib
 from app.database.session import get_db
-from app.database.models import Stock, Signal, Prediction, PredictionOutcome, OutcomeResult
+from app.database.models import Stock, Signal, Prediction, PredictionOutcome, OutcomeResult, Tick
 from app.groww.client import GrowwClient
 from app.groww.live_data import LiveDataClient
 from app.groww.historical_data import HistoricalDataClient
-from app.groww.exceptions import GrowwAPIException
+from app.groww.user import UserClient
+from app.groww.exceptions import GrowwAPIException, GrowwAuthException
 from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
+_start_time = time.time()
 
 router = APIRouter()
 
@@ -205,3 +213,105 @@ async def get_historical(
         return [c.__dict__ for c in candles]
     except GrowwAPIException as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+# ── System status ─────────────────────────────────────────────────────────────
+
+@router.get("/status")
+async def get_system_status(db: Session = Depends(get_db)):
+    """Return connection status for all system components with debug details."""
+    # Database
+    db_status = "connected"
+    db_error: str | None = None
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:
+        db_status = "error"
+        db_error = str(exc)
+        logger.error("DB health check failed: %s", exc)
+
+    # Redis
+    redis_status = "unknown"
+    redis_error: str | None = None
+    try:
+        r = redis_lib.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+        try:
+            r.ping()
+            redis_status = "connected"
+        finally:
+            r.close()
+    except Exception as exc:
+        redis_status = "error"
+        redis_error = str(exc)
+        logger.warning("Redis health check failed: %s", exc)
+
+    # Groww API auth
+    auth_status = "not_required"
+    auth_error: str | None = None
+    if settings.GROWW_ACCESS_TOKEN or (settings.GROWW_API_KEY and settings.GROWW_API_SECRET):
+        try:
+            client = get_groww_client()
+            user_client = UserClient(client)
+            await user_client.get_profile()
+            auth_status = "connected"
+        except GrowwAuthException as exc:
+            auth_status = "error"
+            auth_error = f"[{exc.error_code}] {exc.message}"
+            logger.error("Groww auth check failed: %s", exc)
+        except GrowwAPIException as exc:
+            auth_status = "error"
+            auth_error = f"[{exc.error_code}] HTTP {exc.status_code}: {exc.message}"
+            logger.error("Groww API check failed: %s", exc)
+        except Exception as exc:
+            auth_status = "error"
+            auth_error = str(exc)
+            logger.error("Groww connection error: %s", exc)
+
+    # Market data – check recency of latest tick
+    market_data_status = "unknown"
+    market_data_error: str | None = None
+    last_fetch: str | None = None
+    try:
+        latest_tick = db.query(Tick).order_by(Tick.timestamp.desc()).first()
+        if latest_tick:
+            ts = latest_tick.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            last_fetch = ts.isoformat()
+            market_data_status = "live" if age < 60 else "stale"
+    except Exception as exc:
+        market_data_status = "error"
+        market_data_error = str(exc)
+        logger.error("Market data status check failed: %s", exc)
+
+    # AI (Groq)
+    ai_status = "configured" if settings.GROQ_API_KEY else "unchecked"
+
+    uptime_seconds = int(time.time() - _start_time)
+
+    return {
+        "database": {"status": db_status, "error": db_error},
+        "redis": {"status": redis_status, "error": redis_error},
+        "auth": {"status": auth_status, "error": auth_error},
+        "market_data": {"status": market_data_status, "error": market_data_error},
+        "ai": {"status": ai_status, "error": None},
+        "last_fetch": last_fetch,
+        "uptime_seconds": uptime_seconds,
+    }
+
+
+# ── Groww user profile ────────────────────────────────────────────────────────
+
+@router.get("/user")
+async def get_user_profile(client: GrowwClient = Depends(get_groww_client)):
+    """Fetch authenticated Groww user details."""
+    user_client = UserClient(client)
+    try:
+        profile = await user_client.get_profile()
+        return profile.__dict__
+    except GrowwAPIException as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error_code": exc.error_code, "message": exc.message},
+        ) from exc
