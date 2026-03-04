@@ -57,6 +57,41 @@ export interface Candle {
   volume: number;
 }
 
+export type StatusValue =
+  | "connected"
+  | "live"
+  | "stale"
+  | "configured"
+  | "not_required"
+  | "unchecked"
+  | "unknown"
+  | "error"
+  | "not_installed";
+
+export interface ComponentStatus {
+  status: StatusValue;
+  error: string | null;
+}
+
+export interface SystemStatus {
+  database: ComponentStatus;
+  redis: ComponentStatus;
+  auth: ComponentStatus;
+  market_data: ComponentStatus;
+  ai: ComponentStatus;
+  last_fetch: string | null;
+  uptime_seconds: number;
+}
+
+export interface UserProfile {
+  client_id: string;
+  name: string;
+  email: string;
+  mobile: string;
+  pan: string;
+  is_active: boolean;
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, options);
   if (!res.ok) {
@@ -94,6 +129,10 @@ export const api = {
       `/api/historical/${encodeURIComponent(symbol)}?${params}`
     );
   },
+
+  getStatus: () => apiFetch<SystemStatus>("/api/status"),
+
+  getUser: () => apiFetch<UserProfile>("/api/user"),
 
   healthCheck: () => apiFetch<{ status: string }>("/health"),
 };
