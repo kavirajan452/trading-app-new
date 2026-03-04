@@ -9,8 +9,15 @@ from app.groww.client import GrowwClient
 from app.groww.live_data import LiveDataClient
 from app.groww.historical_data import HistoricalDataClient
 from app.groww.exceptions import GrowwAPIException
+from app.config.settings import settings
 
 router = APIRouter()
+
+# Simple in-process cache for the derived access token (avoids a token request
+# on every API call when key+secret auth is used).
+_cached_token: str = ""
+_token_fetched_at: datetime | None = None
+_TOKEN_TTL = timedelta(hours=20)  # refresh well before typical 24-hour expiry
 
 
 # ── Pydantic schemas ────────────────────────────────────────────────────────
@@ -61,7 +68,18 @@ class PredictionOut(BaseModel):
 # ── Dependency ───────────────────────────────────────────────────────────────
 
 def get_groww_client() -> GrowwClient:
-    return GrowwClient()
+    global _cached_token, _token_fetched_at
+    token = settings.GROWW_ACCESS_TOKEN
+    if not token and settings.GROWW_API_KEY and settings.GROWW_API_SECRET:
+        now = datetime.now(timezone.utc)
+        if not _cached_token or _token_fetched_at is None or now - _token_fetched_at >= _TOKEN_TTL:
+            _cached_token = GrowwClient.get_access_token(
+                api_key=settings.GROWW_API_KEY,
+                secret=settings.GROWW_API_SECRET,
+            )
+            _token_fetched_at = now
+        token = _cached_token
+    return GrowwClient(access_token=token)
 
 
 # ── Stocks ───────────────────────────────────────────────────────────────────

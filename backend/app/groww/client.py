@@ -6,6 +6,7 @@ from app.groww.exceptions import GrowwAPIException, GrowwAuthException, GrowwRat
 
 class GrowwClient:
     BASE_URL = "https://api.groww.in"
+    _TOKEN_PATH = "/v1/api/login/trading/access_token"
 
     def __init__(self, access_token: str | None = None):
         self.access_token = access_token or settings.GROWW_ACCESS_TOKEN
@@ -13,6 +14,37 @@ class GrowwClient:
             base_url=self.BASE_URL,
             timeout=10.0,
         )
+
+    @classmethod
+    def get_access_token(cls, api_key: str, secret: str) -> str:
+        """Exchange an API key and secret for a short-lived access token."""
+        with httpx.Client(base_url=cls.BASE_URL, timeout=10.0) as client:
+            response = client.post(
+                cls._TOKEN_PATH,
+                json={"api_key": api_key, "secret": secret},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+            )
+        if response.status_code == 401:
+            try:
+                body = response.json()
+                message = body.get("message", "Invalid API key or secret")
+            except Exception:
+                message = "Invalid API key or secret"
+            raise GrowwAuthException(message)
+        if response.status_code >= 400:
+            try:
+                body = response.json()
+                error_code = body.get("errorCode", "UNKNOWN")
+                message = body.get("message", response.text)
+            except Exception:
+                error_code = "UNKNOWN"
+                message = response.text
+            raise GrowwAPIException(
+                status_code=response.status_code,
+                error_code=error_code,
+                message=message,
+            )
+        return response.json()["access_token"]
 
     def _headers(self) -> dict[str, str]:
         return {

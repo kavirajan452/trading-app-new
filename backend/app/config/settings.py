@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/tradingdb"
     REDIS_URL: str = "redis://localhost:6379"
     GROWW_API_KEY: str = ""
+    GROWW_API_SECRET: str = ""
     GROWW_ACCESS_TOKEN: str = ""
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "gpt-oss-20b"
