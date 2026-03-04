@@ -1,7 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.database.models import Stock, Signal, Prediction, PredictionOutcome, OutcomeResult
@@ -29,17 +29,18 @@ class StockIn(BaseModel):
 
 
 class StockOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     symbol: str
     name: str
     exchange: str
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class SignalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     stock_symbol: str
     timestamp: datetime
@@ -47,11 +48,10 @@ class SignalOut(BaseModel):
     priority: str
     features: dict[str, Any] | None
 
-    class Config:
-        from_attributes = True
-
 
 class PredictionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     stock_symbol: str
     timestamp: datetime
@@ -60,9 +60,6 @@ class PredictionOut(BaseModel):
     ai_score: float | None
     ai_reason: str | None
     status: str
-
-    class Config:
-        from_attributes = True
 
 
 # ── Dependency ───────────────────────────────────────────────────────────────
